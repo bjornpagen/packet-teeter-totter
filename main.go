@@ -23,29 +23,35 @@ func isWhitelisted(ipAddr uint32) bool {
 }
 
 func main() {
-	sock, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_TCP)
+	rawSocket, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_IP)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create raw TCP socket: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to create raw socket: %v\n", err)
 		os.Exit(1)
 	}
-	defer syscall.Close(sock)
+	defer syscall.Close(rawSocket)
+
+	err = syscall.SetsockoptInt(rawSocket, syscall.IPPROTO_IP, syscall.IP_HDRINCL, 1)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to set socket option: %v\n", err)
+		os.Exit(1)
+	}
 
 	destAddr := &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}
 	buffer := make([]byte, BufSize)
 
 	for {
-		n, srcAddr, err := syscall.Recvfrom(sock, buffer, 0)
+		n, srcAddr, err := syscall.Recvfrom(rawSocket, buffer, 0)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to receive packet: %v\n", err)
 			continue
 		}
 
-		bufBytes := buffer[:n]
-		spew.Dump(bufBytes)
+		bytes := buffer[:n]
+		spew.Dump(bytes)
 
-		ipHeader := buffer[:20]
-		ihl := int(ipHeader[0]&0x0F) << 2
-		transportHeader := buffer[ihl : ihl+8]
+		ipHeader := bytes[:20]
+		ihl := int(ipHeader[0]&0x0f) << 2
+		transportHeader := bytes[ihl : ihl+8]
 		dstPort := binary.BigEndian.Uint16(transportHeader[2:4])
 
 		if dstPort != PortIn {
@@ -60,7 +66,7 @@ func main() {
 			destAddr.Port = PortB
 		}
 
-		err = syscall.Sendto(rawSocket, bufBytes, 0, destAddr)
+		err = syscall.Sendto(rawSocket, ipHeader, 0, destAddr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to send packet: %v\n", err)
 			continue
